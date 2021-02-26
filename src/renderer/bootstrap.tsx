@@ -18,6 +18,7 @@ import { filesystemProvisionerStore } from "../main/extension-filesystem";
 import { App } from "./components/app";
 import { LensApp } from "./lens-app";
 import { themeStore } from "./theme.store";
+import { localStorage } from "./local-storage";
 
 type AppComponent = React.ComponentType & {
   init?(): Promise<void>;
@@ -48,6 +49,7 @@ export async function bootstrap(App: AppComponent) {
     extensionsStore.load(),
     filesystemProvisionerStore.load(),
     themeStore.init(),
+    localStorage.load(),
   ]);
 
   // Register additional store listeners

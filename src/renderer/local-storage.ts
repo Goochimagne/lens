@@ -1,37 +1,74 @@
-export * from "./utils/createStorage"
-import { StorageAdapter, StorageHelper, StorageHelperOptions } from "./utils/createStorage";
-import { ClusterId, clusterStore, getHostedClusterId } from "../common/cluster-store";
+export { StorageHelper, StorageHelperOptions, StorageConfiguration, StorageAdapter } from "./utils/createStorage";
 
-// TODO: save state to separated json-file (instead of cluster-store)
+import { StorageHelper, StorageHelperOptions } from "./utils/createStorage";
+import { action, comparer, observable } from "mobx";
+import { BaseStore } from "../common/base-store";
+import { ClusterId, getHostedClusterId } from "../common/cluster-store";
 
-export function createStorage<T>(key: string, defaultValue?: T, options: StorageHelperOptions<T> = {}) {
-  return new StorageHelper(key, defaultValue, {
-    storage: createLocalStorageAdapter<T>(getHostedClusterId()),
-    ...options,
-  });
+export interface LensLocalStorageModel {
+  [clusterId: string]: {
+    [storageKey: string]: any;
+  };
 }
 
-/**
- * Persists window.localStorage state in json in file-system.
- * This is required because of app's random ports between restarts.
- */
-export function createLocalStorageAdapter<T>(clusterId: ClusterId): StorageAdapter<T> {
-  return {
-    getItem(key: string) {
-      return clusterStore.getPreferences(clusterId).uiState?.[key]
-    },
-    setItem(key: string, value: any) {
-      const storage = clusterStore.getPreferences(clusterId);
-      if (storage) {
-        storage.uiState ??= {};
-        storage.uiState[key] = value;
-      }
-    },
-    removeItem(key: string) {
-      const storage = clusterStore.getPreferences(clusterId);
-      if (storage) {
-        delete storage.uiState?.[key];
-      }
-    },
+export class LensLocalStorage extends BaseStore<LensLocalStorageModel> {
+  public state = observable.map<ClusterId, Record<string, any>>([], {
+    equals: comparer.shallow,
+  });
+
+  constructor() {
+    super({
+      configName: "lens-local-storage",
+      autoLoad: false,
+      syncEnabled: false,
+    });
   }
+
+  getItem(clusterId: string, key: string) {
+    return this.state.get(clusterId)?.[key];
+  }
+
+  @action
+  setItem(clusterId: string, key: string, value: any) {
+    const storage = this.state.get(clusterId) ?? {};
+
+    if (value != null) {
+      storage[key] = value;
+    } else {
+      delete storage[key];
+    }
+
+    this.state.merge({ [clusterId]: storage });
+    this.saveToFile(this.toJSON());
+  }
+
+  @action
+  protected fromStore(data: LensLocalStorageModel = {}) {
+    this.state.replace(data);
+  }
+
+  toJSON(): LensLocalStorageModel {
+    return this.state.toJSON();
+  }
+}
+
+export const localStorage = LensLocalStorage.getInstance<LensLocalStorage>();
+
+export function createStorage<T>(key: string, defaultValue?: T, options: StorageHelperOptions<T> = {}) {
+  const clusterId = getHostedClusterId();
+
+  return new StorageHelper(key, defaultValue, {
+    ...options,
+    storage: {
+      getItem(key: string) {
+        return localStorage.getItem(clusterId, key);
+      },
+      setItem(key: string, value: any) {
+        localStorage.setItem(clusterId, key, value);
+      },
+      removeItem(key: string) {
+        localStorage.setItem(clusterId, key, null);
+      },
+    }
+  });
 }

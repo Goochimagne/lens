@@ -6,7 +6,7 @@ import { observer } from "mobx-react";
 import { NavLink } from "react-router-dom";
 import { Icon } from "../icon";
 import { TabLayoutRoute } from "./tab-layout";
-import { sidebarStorage } from "./sidebar-storage";
+import { sidebarLocalStorage } from "./sidebar-storage";
 
 interface SidebarItemProps {
   id: string; // Used to save nav item collapse/expand state in local storage
@@ -30,15 +30,15 @@ export class SidebarItem extends React.Component<SidebarItemProps> {
   }
 
   get expanded(): boolean {
-    return sidebarStorage.get().expanded[this.id];
+    return sidebarLocalStorage.get().expanded[this.id];
   }
 
   get compact(): boolean {
-    return this.props.isCompact ?? sidebarStorage.get().compact;
+    return this.props.isCompact ?? sidebarLocalStorage.get().compact;
   }
 
   toggleExpand = (event: React.MouseEvent) => {
-    sidebarStorage.merge(draft => {
+    sidebarLocalStorage.merge(draft => {
       draft.expanded[this.id] = !draft.expanded[this.id];
     });
 

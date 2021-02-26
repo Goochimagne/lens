@@ -29,6 +29,16 @@ export interface DockStorage {
   selectedTabId?: TabId;
 }
 
+export const dockStorage = createStorage<DockStorage>("dock", {
+  isOpen: false,
+  get height(){
+    return DockStore.defaultHeight;
+  },
+  tabs: [
+    { id: "terminal", kind: TabKind.TERMINAL, title: "Terminal" },
+  ],
+});
+
 @autobind()
 export class DockStore {
   readonly minHeight = 100;
@@ -43,24 +53,16 @@ export class DockStore {
   @observable tabs: IDockTab[] = [];
   @observable selectedTabId: TabId;
 
-  protected storage = createStorage<DockStorage>("dock", {
-    isOpen: false,
-    height: DockStore.defaultHeight,
-    tabs: [
-      { id: "terminal", kind: TabKind.TERMINAL, title: "Terminal" },
-    ],
-  });
-
   constructor() {
     this.init();
   }
 
   private async init() {
     // restore state after reload
-    this.restoreState(this.storage.get());
+    this.restoreState(dockStorage.get());
 
-    // sync storable state with local storage
-    reaction(this.getStorableData, data => this.storage.set(data), {
+    // sync storable state with local-storage
+    reaction(this.getStorableData, data => dockStorage.set(data), {
       equals: comparer.shallow,
     });
 
@@ -252,7 +254,7 @@ export class DockStore {
 
   @action
   reset() {
-    this.restoreState(this.storage.defaultValue);
+    this.restoreState(dockStorage.defaultValue);
     this.setHeight(DockStore.defaultHeight);
     this.close();
   }

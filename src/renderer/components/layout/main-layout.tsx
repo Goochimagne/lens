@@ -9,7 +9,7 @@ import { ErrorBoundary } from "../error-boundary";
 import { ResizeDirection, ResizeGrowthDirection, ResizeSide, ResizingAnchor } from "../resizing-anchor";
 import { MainLayoutHeader } from "./main-layout-header";
 import { Sidebar } from "./sidebar";
-import { sidebarStorage } from "./sidebar-storage";
+import { sidebarLocalStorage } from "./sidebar-storage";
 
 export interface MainLayoutProps {
   className?: any;
@@ -21,13 +21,13 @@ export interface MainLayoutProps {
 @observer
 export class MainLayout extends React.Component<MainLayoutProps> {
   onSidebarCompactModeChange = () => {
-    sidebarStorage.merge(draft => {
+    sidebarLocalStorage.merge(draft => {
       draft.compact = !draft.compact;
     });
   };
 
   onSidebarResize = (width: number) => {
-    sidebarStorage.merge(draft => {
+    sidebarLocalStorage.merge(draft => {
       draft.width = width;
     });
   };
@@ -36,7 +36,7 @@ export class MainLayout extends React.Component<MainLayoutProps> {
     const cluster = getHostedCluster();
     const { onSidebarCompactModeChange, onSidebarResize } = this;
     const { className, headerClass, footer, footerClass, children } = this.props;
-    const { compact, width: sidebarWidth } = sidebarStorage.get();
+    const { compact, width: sidebarWidth } = sidebarLocalStorage.get();
     const style = { "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties;
 
     if (!cluster) {

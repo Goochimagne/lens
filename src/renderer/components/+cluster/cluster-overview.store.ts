@@ -17,19 +17,19 @@ export enum MetricNodeRole {
   WORKER = "worker"
 }
 
+export const clusterOverview = createStorage("cluster_overview", {
+  metricType: MetricType.CPU, // setup defaults
+  metricNodeRole: MetricNodeRole.WORKER,
+});
+
 @autobind()
 export class ClusterOverviewStore extends KubeObjectStore<Cluster> {
   api = clusterApi;
 
-  private storage = createStorage("cluster_overview", {
-    metricType: MetricType.CPU, // setup defaults
-    metricNodeRole: MetricNodeRole.WORKER,
-  });
-
   @observable metrics: Partial<IClusterMetrics> = {};
   @observable metricsLoaded = false;
-  @observable metricType: MetricType = this.storage.get().metricType;
-  @observable metricNodeRole: MetricNodeRole = this.storage.get().metricNodeRole;
+  @observable metricType = clusterOverview.get().metricType;
+  @observable metricNodeRole = clusterOverview.get().metricNodeRole;
 
   constructor() {
     super();
@@ -37,21 +37,20 @@ export class ClusterOverviewStore extends KubeObjectStore<Cluster> {
   }
 
   private bindEvents() {
-    // sync user-settings to local-storage
-    reaction(() => ({
+    const getStorableMetrics = () => ({
       metricType: this.metricType,
       metricNodeRole: this.metricNodeRole,
-    }), (userSettings) => {
-      this.storage.merge(userSettings);
-    }, {
+    });
+
+    // sync user-settings to local-storage
+    reaction(getStorableMetrics, settings => clusterOverview.merge(settings), {
       equals: comparer.shallow,
     });
 
-    // auto-refresh metrics on user action
-    reaction(() => this.metricNodeRole, () => {
-      this.resetMetrics();
-      this.loadMetrics();
-    });
+    // auto-refresh metrics on user-action
+    reaction(() => this.metricNodeRole, () => this.loadMetrics({}, {
+      resetCache: true,
+    }));
 
     // check which node type to select
     reaction(() => nodesStore.items.length, () => {
@@ -63,10 +62,14 @@ export class ClusterOverviewStore extends KubeObjectStore<Cluster> {
   }
 
   @action
-  async loadMetrics(params?: IMetricsReqParams) {
+  async loadMetrics(params?: IMetricsReqParams, { resetCache = false } = {}) {
     await when(() => nodesStore.isLoaded);
     const { masterNodes, workerNodes } = nodesStore;
     const nodes = this.metricNodeRole === MetricNodeRole.MASTER && masterNodes.length ? masterNodes : workerNodes;
+
+    if (resetCache) {
+      this.resetMetrics();
+    }
 
     this.metrics = await clusterApi.getMetrics(nodes.map(node => node.getName()), params);
     this.metricsLoaded = true;
@@ -92,7 +95,6 @@ export class ClusterOverviewStore extends KubeObjectStore<Cluster> {
   reset() {
     super.reset();
     this.resetMetrics();
-    this.storage.clear();
   }
 }
 

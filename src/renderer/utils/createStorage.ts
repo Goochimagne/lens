@@ -3,22 +3,24 @@
 // TODO: write unit/integration tests
 
 import { CreateObservableOptions } from "mobx/lib/api/observable";
-import { action, comparer, observable, toJS } from "mobx";
+import { action, comparer, observable, toJS, when } from "mobx";
 import { Draft, produce } from "immer";
 
 export interface StorageHelperOptions<T = any> extends StorageConfiguration<T> {
-  autoInit?: boolean; // default: true, preload data at early stages (e.g. in place of use)
+  autoInit?: boolean; // get latest storage state on init (default: true)
 }
 
 export interface StorageConfiguration<T = any> {
   storage?: StorageAdapter<T>;
   observable?: CreateObservableOptions;
+  onChange?(value: T, oldValue?: T): void;
 }
 
 export interface StorageAdapter<T = any, C = StorageHelper<T>> {
-  getItem(this: C, key: string): T | Promise<T>;
-  setItem(this: C, key: string, value: T): void;
-  removeItem(this: C, key: string): void;
+  getItem(this: C, key: string): T | Promise<T>; // import
+  setItem(this: C, key: string, value: T): void; // export
+  removeItem?(this: C, key: string): void; // default: setItem(key, undefined)
+  onChange?(this: C, value: T, oldValue?: T): void;
 }
 
 export const localStorageAdapter: StorageAdapter = {
@@ -39,17 +41,18 @@ export class StorageHelper<T = any> {
     storage: localStorageAdapter,
     observable: {
       deep: true,
-      equals: comparer.default,
+      equals: comparer.shallow,
     }
   };
 
-  @observable initialized = false;
-  @observable.ref options: StorageHelperOptions = {};
+  private data = observable.box<T>();
   @observable.ref storage: StorageAdapter<T, ThisType<this>>;
-  protected data = observable.box<T>();
+  @observable initialized = false;
 
-  constructor(readonly key: string, readonly defaultValue?: T, readonly initOptions: StorageHelperOptions = {}) {
-    this.options = { ...StorageHelper.defaultOptions, ...initOptions };
+  whenReady = when(() => this.initialized);
+
+  constructor(readonly key: string, readonly defaultValue?: T, readonly options: StorageHelperOptions = {}) {
+    this.options = { ...StorageHelper.defaultOptions, ...options };
     this.configure(this.options);
 
     if (this.options.autoInit) {
@@ -74,24 +77,36 @@ export class StorageHelper<T = any> {
   }
 
   @action
-  protected setupStorage(storage: StorageAdapter<T>) {
-    this.storage = {
-      ...storage,
-      getItem: storage.getItem.bind(this),
-      setItem: storage.setItem.bind(this),
-      removeItem: storage.removeItem.bind(this),
-    };
+  configure(config: StorageConfiguration = this.options): this {
+    if (config.storage) {
+      this.storage = this.setupStorage(config.storage);
+    }
+
+    if (config.observable) {
+      this.data = observable.box<T>(this.data.get(), {
+        ...StorageHelper.defaultOptions.observable,
+        ...config.observable,
+      });
+      this.data.observe(change => this.onChange(change));
+    }
+
+    return this;
   }
 
-  @action
-  configure(config: StorageConfiguration): this {
-    if (config.storage) {
-      this.setupStorage(config.storage);
-    }
-    if (config.observable) {
-      this.data = observable.box<T>(this.data.get(), config.observable);
-    }
-    return this;
+  protected setupStorage(storage: StorageAdapter<T>): StorageAdapter<T, ThisType<this>> {
+    return Object.getOwnPropertyNames(storage).reduce((storage, name: keyof StorageAdapter) => {
+      storage[name] = storage[name]?.bind(this); // bind "this"-context for storage-adapter methods
+
+      return storage;
+    }, { ...storage });
+  }
+
+  protected onChange(change: { newValue: T, oldValue?: T }) {
+    const { newValue, oldValue } = toJS(change, { recurseEverything: true });
+
+    if (oldValue == null) return; // skip on init
+    this.options.onChange?.(newValue, oldValue);
+    this.storage.onChange?.(newValue, oldValue);
   }
 
   async getStorageValueAsync(): Promise<T> {
@@ -132,6 +147,7 @@ export class StorageHelper<T = any> {
 
   merge(value: Partial<T> | ((draft: Draft<T>) => Partial<T> | void)) {
     const updater = typeof value === "function" ? value : () => value;
+
     try {
       const currentValue = toJS(this.get());
       const nextValue = produce(currentValue, updater) as T;
@@ -144,10 +160,18 @@ export class StorageHelper<T = any> {
 
   clear() {
     try {
+      if (this.storage.removeItem) {
+        this.storage.removeItem(this.key);
+      } else {
+        this.storage.setItem(this.key, undefined);
+      }
       this.data.set(null);
-      this.storage.removeItem(this.key);
     } catch (error) {
       console.error(`StorageHelper.clear(): ${error}`, this);
     }
+  }
+
+  toJSON() {
+    return JSON.stringify(this.data.get());
   }
 }

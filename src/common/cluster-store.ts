@@ -1,4 +1,3 @@
-import type { WorkspaceId } from "./workspace-store";
 import { workspaceStore } from "./workspace-store";
 import path from "path";
 import { app, ipcRenderer, remote, webFrame } from "electron";
@@ -15,6 +14,7 @@ import { KubeConfig } from "@kubernetes/client-node";
 import { handleRequest, requestMain, subscribeToBroadcast, unsubscribeAllFromBroadcast } from "./ipc";
 import _ from "lodash";
 import move from "array-move";
+import type { WorkspaceId } from "./workspace-store";
 
 export interface ClusterIconUpload {
   clusterId: string;
@@ -70,13 +70,12 @@ export interface ClusterModel {
   kubeConfig?: string; // yaml
 }
 
-export interface ClusterPreferences extends ClusterPrometheusPreferences {
+export interface ClusterPreferences extends ClusterPrometheusPreferences{
   terminalCWD?: string;
   clusterName?: string;
   iconOrder?: number;
   icon?: string;
   httpsProxy?: string;
-  uiState?: Record<string, any>; // local-storage
 }
 
 export interface ClusterPrometheusPreferences {
@@ -218,10 +217,6 @@ export class ClusterStore extends BaseStore<ClusterStoreModel> {
 
     this.activeCluster = clusterId;
     workspaceStore.setLastActiveClusterId(clusterId);
-  }
-
-  getPreferences(clusterId: ClusterId): ClusterPreferences {
-    return this.getById(clusterId)?.preferences ?? {};
   }
 
   @action

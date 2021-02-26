@@ -93,13 +93,13 @@ const defaultProps: Partial<ItemListLayoutProps> = {
   virtual: true
 };
 
+export const itemListLayoutStorage = createStorage("item_list_layout", {
+  showFilters: false, // setup defaults
+});
+
 @observer
 export class ItemListLayout extends React.Component<ItemListLayoutProps> {
   static defaultProps = defaultProps as object;
-
-  public storage = createStorage("item_list_layout", {
-    showFilters: false,
-  });
 
   async componentDidMount() {
     const { isClusterScoped, isConfigurable, tableId, preloadStores } = this.props;
@@ -279,9 +279,9 @@ export class ItemListLayout extends React.Component<ItemListLayoutProps> {
 
   renderFilters() {
     const { hideFilters } = this.props;
-    const { isReady, filters, storage } = this;
+    const { isReady, filters } = this;
 
-    if (!isReady || !filters.length || hideFilters || !storage.get().showFilters) {
+    if (!isReady || !filters.length || hideFilters || !itemListLayoutStorage.get().showFilters) {
       return;
     }
 
@@ -321,13 +321,13 @@ export class ItemListLayout extends React.Component<ItemListLayoutProps> {
   }
 
   renderInfo() {
-    const { items, isReady, filters, storage } = this;
+    const { items, isReady, filters } = this;
     const allItemsCount = this.props.store.getTotalCount();
     const itemsCount = items.length;
     const isFiltered = isReady && filters.length > 0;
 
     if (isFiltered) {
-      const toggleFilters = () => storage.merge(draft => {
+      const toggleFilters = () => itemListLayoutStorage.merge(draft => {
         draft.showFilters = !draft.showFilters;
       });
 

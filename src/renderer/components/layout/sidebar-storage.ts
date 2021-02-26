@@ -1,6 +1,6 @@
 import { createStorage } from "../../local-storage";
 
-export interface SidebarStorageModel {
+export interface SidebarLocalStorageModel {
   width: number;
   compact: boolean;
   expanded: {
@@ -8,7 +8,7 @@ export interface SidebarStorageModel {
   }
 }
 
-export const sidebarStorage = createStorage<SidebarStorageModel>("sidebar", {
+export const sidebarLocalStorage = createStorage<SidebarLocalStorageModel>("sidebar", {
   width: 200,     // sidebar size in non-compact mode
   compact: false, // compact-mode (icons only)
   expanded: {},
