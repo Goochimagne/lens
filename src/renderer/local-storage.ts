@@ -1,45 +1,60 @@
+import { remote } from "electron";
+import { action, comparer, IReactionDisposer, observable, reaction, toJS } from "mobx";
+import produce from "immer";
+import Config from "conf";
+import { StorageAdapter, StorageHelper, StorageHelperOptions } from "./utils/createStorage";
+import { ClusterId, getHostedClusterId } from "../common/cluster-store";
+import { getAppVersion } from "../common/utils/app-version";
+
 export { StorageHelper, StorageHelperOptions, StorageConfiguration, StorageAdapter } from "./utils/createStorage";
 
-import { StorageHelper, StorageHelperOptions } from "./utils/createStorage";
-import { action, comparer, observable } from "mobx";
-import { BaseStore } from "../common/base-store";
-import { ClusterId, getHostedClusterId } from "../common/cluster-store";
-
 export interface LensLocalStorageModel {
-  [clusterId: string]: {
-    [storageKey: string]: any;
-  };
+  [clusterId: string]: LensLocalStorageState;
 }
 
-export class LensLocalStorage extends BaseStore<LensLocalStorageModel> {
-  public state = observable.map<ClusterId, Record<string, any>>([], {
-    equals: comparer.shallow,
-  });
+export type LensLocalStorageState = Record<string, any>;
 
-  constructor() {
-    super({
+export class LensLocalStorage {
+  private fileStorage: Config<LensLocalStorageModel>;
+  private state = observable.map<ClusterId, LensLocalStorageState>();
+
+  async init() {
+    await this.load();
+    this.bindAutoSave();
+  }
+
+  private load() {
+    this.fileStorage = new Config({
       configName: "lens-local-storage",
-      autoLoad: false,
-      syncEnabled: false,
+      cwd: remote.app.getPath("userData"),
+      projectVersion: getAppVersion(),
+    });
+
+    this.fromStore(this.fileStorage.store);
+  }
+
+  // FIXME: reset on app/page reload
+  private bindAutoSave(): IReactionDisposer {
+    return reaction(() => this.toJSON(), state => this.saveToFile(state), {
+      equals: comparer.shallow,
     });
   }
 
-  getItem(clusterId: string, key: string) {
-    return this.state.get(clusterId)?.[key];
+  @action
+  private saveToFile(state: LensLocalStorageModel){
+    this.fileStorage.set(state);
+  }
+
+  getState(clusterId: ClusterId): LensLocalStorageState {
+    return this.state.get(clusterId) ?? {};
   }
 
   @action
-  setItem(clusterId: string, key: string, value: any) {
-    const storage = this.state.get(clusterId) ?? {};
+  setState(clusterId: ClusterId, updater: (state: LensLocalStorageModel) => void) {
+    const state = toJS(this.getState(clusterId), { recurseEverything: true });
+    const nextState = produce(state, updater);
 
-    if (value != null) {
-      storage[key] = value;
-    } else {
-      delete storage[key];
-    }
-
-    this.state.merge({ [clusterId]: storage });
-    this.saveToFile(this.toJSON());
+    this.state.set(clusterId, nextState);
   }
 
   @action
@@ -48,27 +63,34 @@ export class LensLocalStorage extends BaseStore<LensLocalStorageModel> {
   }
 
   toJSON(): LensLocalStorageModel {
-    return this.state.toJSON();
+    return toJS(this.state.toJSON(), {
+      recurseEverything: true,
+    });
   }
 }
 
-export const localStorage = LensLocalStorage.getInstance<LensLocalStorage>();
+export const localStorage = new LensLocalStorage();
+
+export function createLocalStorageAdapter<T>(clusterId: ClusterId): StorageAdapter<T> {
+  return {
+    getItem(key: string) {
+      return localStorage.getState(clusterId)[key];
+    },
+    setItem(key: string, value: any) {
+      localStorage.setState(clusterId, state => {
+        if (value != null) state[key] = value;
+        else delete state[key];
+      });
+    },
+  };
+}
 
 export function createStorage<T>(key: string, defaultValue?: T, options: StorageHelperOptions<T> = {}) {
   const clusterId = getHostedClusterId();
+  const jsonFileStorageAdapter = createLocalStorageAdapter(clusterId);
 
   return new StorageHelper(key, defaultValue, {
+    storage: jsonFileStorageAdapter,
     ...options,
-    storage: {
-      getItem(key: string) {
-        return localStorage.getItem(clusterId, key);
-      },
-      setItem(key: string, value: any) {
-        localStorage.setItem(clusterId, key, value);
-      },
-      removeItem(key: string) {
-        localStorage.setItem(clusterId, key, null);
-      },
-    }
   });
 }

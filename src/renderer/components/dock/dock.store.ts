@@ -1,5 +1,5 @@
 import MD5 from "crypto-js/md5";
-import { action, comparer, computed, IReactionOptions, observable, reaction } from "mobx";
+import { action, comparer, computed, IReactionOptions, observable, reaction, toJS } from "mobx";
 import { createStorage } from "../../local-storage";
 import { autobind } from "../../utils";
 import throttle from "lodash/throttle";
@@ -22,18 +22,14 @@ export interface IDockTab {
   pinned?: boolean; // not closable
 }
 
-export interface DockStorage {
-  isOpen: boolean;
-  height: number;
+export interface DockState {
   tabs: IDockTab[];
   selectedTabId?: TabId;
+  isOpen?: boolean;
+  height?: number;
 }
 
-export const dockStorage = createStorage<DockStorage>("dock", {
-  isOpen: false,
-  get height(){
-    return DockStore.defaultHeight;
-  },
+export const dockStorage = createStorage<DockState>("dock", {
   tabs: [
     { id: "terminal", kind: TabKind.TERMINAL, title: "Terminal" },
   ],
@@ -43,13 +39,9 @@ export const dockStorage = createStorage<DockStorage>("dock", {
 export class DockStore {
   readonly minHeight = 100;
 
-  static get defaultHeight() {
-    return Math.round(window.innerHeight / 2.5);
-  }
-
   @observable fullSize = false;
-  @observable isOpen: boolean;
-  @observable height: number;
+  @observable isOpen = false;
+  @observable height = this.defaultHeight;
   @observable tabs: IDockTab[] = [];
   @observable selectedTabId: TabId;
 
@@ -58,11 +50,11 @@ export class DockStore {
   }
 
   private async init() {
-    // restore state after reload
-    this.restoreState(dockStorage.get());
+    await dockStorage.whenReady;
+    this.setState(dockStorage.get());
 
     // sync storable state with local-storage
-    reaction(this.getStorableData, data => dockStorage.set(data), {
+    reaction(() => this.getState(), data => dockStorage.set(data), {
       equals: comparer.shallow,
     });
 
@@ -70,11 +62,28 @@ export class DockStore {
     window.addEventListener("resize", throttle(this.checkMaxHeight, 250));
   }
 
-  getStorableData = (): DockStorage => {
-    const { isOpen, tabs, selectedTabId, height } = this;
+  getState(): DockState {
+    const { isOpen, tabs, height, selectedTabId } = this;
 
-    return { isOpen, tabs, selectedTabId, height };
-  };
+    return toJS({ isOpen, tabs, height, selectedTabId }, {
+      recurseEverything: true,
+    });
+  }
+
+  @action
+  setState(state: DockState) {
+    const {
+      isOpen = false,
+      selectedTabId = null,
+      height = this.defaultHeight,
+      tabs = [],
+    } = state;
+
+    this.isOpen = isOpen;
+    this.tabs = tabs;
+    this.selectedTabId = selectedTabId;
+    this.setHeight(height);
+  }
 
   @computed get selectedTab() {
     return this.tabs.find(tab => tab.id === this.selectedTabId);
@@ -90,9 +99,13 @@ export class DockStore {
     return Math.max(preferredMax, this.minHeight); // don't let max < min
   }
 
+  get defaultHeight() {
+    return Math.round(window.innerHeight / 2.5);
+  }
+
   protected checkMaxHeight() {
     if (!this.height) {
-      this.setHeight(DockStore.defaultHeight || this.minHeight);
+      this.setHeight(this.defaultHeight || this.minHeight);
     }
 
     if (this.height > this.maxHeight) {
@@ -243,19 +256,8 @@ export class DockStore {
   }
 
   @action
-  restoreState(state: DockStorage) {
-    const { isOpen, tabs, selectedTabId, height } = state;
-
-    this.isOpen = isOpen;
-    this.tabs = tabs;
-    this.height = height;
-    this.selectedTabId = selectedTabId;
-  }
-
-  @action
   reset() {
-    this.restoreState(dockStorage.defaultValue);
-    this.setHeight(DockStore.defaultHeight);
+    this.setState(dockStorage.defaultValue);
     this.close();
   }
 }

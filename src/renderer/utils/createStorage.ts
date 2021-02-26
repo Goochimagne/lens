@@ -1,10 +1,10 @@
-// Helper for persisting data in local or remote storage.
-// Web-storage adapter is used by default (window.localStorage)
+// Helper for work with persistent local storage (default: window.localStorage)
 // TODO: write unit/integration tests
 
-import { CreateObservableOptions } from "mobx/lib/api/observable";
+import type { CreateObservableOptions } from "mobx/lib/api/observable";
 import { action, comparer, observable, toJS, when } from "mobx";
 import { Draft, produce } from "immer";
+import isEqual from "lodash/isEqual";
 
 export interface StorageHelperOptions<T = any> extends StorageConfiguration<T> {
   autoInit?: boolean; // get latest storage state on init (default: true)
@@ -13,13 +13,11 @@ export interface StorageHelperOptions<T = any> extends StorageConfiguration<T> {
 export interface StorageConfiguration<T = any> {
   storage?: StorageAdapter<T>;
   observable?: CreateObservableOptions;
-  onChange?(value: T, oldValue?: T): void;
 }
 
 export interface StorageAdapter<T = any, C = StorageHelper<T>> {
   getItem(this: C, key: string): T | Promise<T>; // import
   setItem(this: C, key: string, value: T): void; // export
-  removeItem?(this: C, key: string): void; // default: setItem(key, undefined)
   onChange?(this: C, value: T, oldValue?: T): void;
 }
 
@@ -28,10 +26,11 @@ export const localStorageAdapter: StorageAdapter = {
     return JSON.parse(localStorage.getItem(key));
   },
   setItem(key: string, value: any) {
-    localStorage.setItem(key, JSON.stringify(value));
-  },
-  removeItem(key: string) {
-    localStorage.removeItem(key);
+    if (value != null) {
+      localStorage.setItem(key, JSON.stringify(value));
+    } else {
+      localStorage.removeItem(key);
+    }
   }
 };
 
@@ -53,6 +52,7 @@ export class StorageHelper<T = any> {
 
   constructor(readonly key: string, readonly defaultValue?: T, readonly options: StorageHelperOptions = {}) {
     this.options = { ...StorageHelper.defaultOptions, ...options };
+    this.set(defaultValue);
     this.configure(this.options);
 
     if (this.options.autoInit) {
@@ -65,113 +65,89 @@ export class StorageHelper<T = any> {
     if (this.initialized) return;
 
     try {
-      const value = await this.getStorageValueAsync();
+      const value = await this.load();
+      const notEmpty = this.hasValue(value);
+      const notDefault = !this.isDefaultValue(value);
 
-      if (value != null) {
+      if (notEmpty && notDefault) {
         this.set(value);
-        this.initialized = true;
       }
+      this.initialized = true;
     } catch (error) {
       console.error(`StorageHelper.init(): ${error}`, this);
     }
   }
 
-  @action
-  configure(config: StorageConfiguration = this.options): this {
-    if (config.storage) {
-      this.storage = this.setupStorage(config.storage);
-    }
+  hasValue(value: T) {
+    return value != null;
+  }
 
-    if (config.observable) {
-      this.data = observable.box<T>(this.data.get(), {
-        ...StorageHelper.defaultOptions.observable,
-        ...config.observable,
-      });
-      this.data.observe(change => this.onChange(change));
-    }
+  isDefaultValue(value: T) {
+    return isEqual(value, this.defaultValue);
+  }
+
+  @action
+  configure({ storage, observable }: StorageConfiguration<T> = {}): this {
+    if (storage) this.configureStorage(storage);
+    if (observable) this.configureObservable(observable);
 
     return this;
   }
 
-  protected setupStorage(storage: StorageAdapter<T>): StorageAdapter<T, ThisType<this>> {
-    return Object.getOwnPropertyNames(storage).reduce((storage, name: keyof StorageAdapter) => {
-      storage[name] = storage[name]?.bind(this); // bind "this"-context for storage-adapter methods
+  @action
+  configureStorage(storage: StorageAdapter<T>) {
+    this.storage = Object.getOwnPropertyNames(storage).reduce((storage, name: keyof StorageAdapter) => {
+      storage[name] = storage[name]?.bind(this); // bind storage-adapter methods to "this"-context
 
       return storage;
     }, { ...storage });
   }
 
-  protected onChange(change: { newValue: T, oldValue?: T }) {
-    const { newValue, oldValue } = toJS(change, { recurseEverything: true });
+  @action
+  configureObservable(options: CreateObservableOptions = {}) {
+    this.data = observable.box<T>(this.data.get(), {
+      ...StorageHelper.defaultOptions.observable, // inherit default observability options
+      ...options,
+    });
+    this.data.observe(change => {
+      const { newValue, oldValue } = toJS(change, { recurseEverything: true });
 
-    if (oldValue == null) return; // skip on init
-    this.options.onChange?.(newValue, oldValue);
-    this.storage.onChange?.(newValue, oldValue);
+      this.onChange(newValue, oldValue);
+    });
   }
 
-  async getStorageValueAsync(): Promise<T> {
+  protected onChange(value: T, oldValue?: T) {
+    if (!this.initialized) return;
+
+    this.storage.onChange?.(value, oldValue);
+    this.storage.setItem(this.key, value);
+  }
+
+  async load(): Promise<T> {
     return this.storage.getItem(this.key);
   }
 
-  getStorageValue(): T {
-    try {
-      const value = this.storage.getItem(this.key) as T;
-      const isAsync = value instanceof Promise;
-
-      if (value != null && !isAsync) {
-        return value;
-      }
-    } catch (error) {
-      console.error(`StorageHelper.getStorageValue(): ${error}`, this);
-    }
-  }
-
   get(): T {
-    const value = this.data.get();
-
-    if (value != null) {
-      return value;
-    }
-
-    return this.getStorageValue() ?? this.defaultValue;
+    return toJS(this.data.get());
   }
 
   set(value: T) {
-    try {
-      this.storage.setItem(this.key, value);
-      this.data.set(value);
-    } catch (error) {
-      console.error(`StorageHelper.set(): ${error}`, this, { value });
-    }
+    this.data.set(value);
+  }
+
+  clear() {
+    this.data.set(null);
   }
 
   merge(value: Partial<T> | ((draft: Draft<T>) => Partial<T> | void)) {
     const updater = typeof value === "function" ? value : () => value;
+    const currentValue = this.get();
+    const nextValue = produce(currentValue, updater) as T;
 
-    try {
-      const currentValue = toJS(this.get());
-      const nextValue = produce(currentValue, updater) as T;
-
-      this.set(nextValue);
-    } catch (error) {
-      console.error(`StorageHelper.merge(): ${error}`, this, { value });
-    }
+    this.set(nextValue);
   }
 
-  clear() {
-    try {
-      if (this.storage.removeItem) {
-        this.storage.removeItem(this.key);
-      } else {
-        this.storage.setItem(this.key, undefined);
-      }
-      this.data.set(null);
-    } catch (error) {
-      console.error(`StorageHelper.clear(): ${error}`, this);
-    }
-  }
-
-  toJSON() {
-    return JSON.stringify(this.data.get());
+  toJSON(): string {
+    return JSON.stringify(this.get());
   }
 }

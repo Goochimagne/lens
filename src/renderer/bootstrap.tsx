@@ -49,7 +49,7 @@ export async function bootstrap(App: AppComponent) {
     extensionsStore.load(),
     filesystemProvisionerStore.load(),
     themeStore.init(),
-    localStorage.load(),
+    localStorage.init(),
   ]);
 
   // Register additional store listeners

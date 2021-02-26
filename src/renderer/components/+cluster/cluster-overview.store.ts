@@ -1,4 +1,4 @@
-import { action, comparer, observable, reaction, when } from "mobx";
+import { action, comparer, observable, reaction, toJS, when } from "mobx";
 import { KubeObjectStore } from "../../kube-object.store";
 import { Cluster, clusterApi, IClusterMetrics } from "../../api/endpoints";
 import { autobind } from "../../utils";
@@ -17,7 +17,12 @@ export enum MetricNodeRole {
   WORKER = "worker"
 }
 
-export const clusterOverview = createStorage("cluster_overview", {
+export interface ClusterOverviewState {
+  metricType: MetricType;
+  metricNodeRole: MetricNodeRole,
+}
+
+export const clusterOverviewStorage = createStorage<ClusterOverviewState>("cluster_overview", {
   metricType: MetricType.CPU, // setup defaults
   metricNodeRole: MetricNodeRole.WORKER,
 });
@@ -28,29 +33,46 @@ export class ClusterOverviewStore extends KubeObjectStore<Cluster> {
 
   @observable metrics: Partial<IClusterMetrics> = {};
   @observable metricsLoaded = false;
-  @observable metricType = clusterOverview.get().metricType;
-  @observable metricNodeRole = clusterOverview.get().metricNodeRole;
+  @observable metricType = MetricType.CPU;
+  @observable metricNodeRole = MetricNodeRole.WORKER;
 
   constructor() {
     super();
-    this.bindEvents();
+    this.init();
   }
 
-  private bindEvents() {
-    const getStorableMetrics = () => ({
-      metricType: this.metricType,
-      metricNodeRole: this.metricNodeRole,
+  getState(): ClusterOverviewState {
+    const { metricType, metricNodeRole } = this;
+
+    return toJS({ metricType, metricNodeRole }, {
+      recurseEverything: true,
+    });
+  }
+
+  @action
+  setState(state: ClusterOverviewState) {
+    const { metricType, metricNodeRole } = state;
+
+    this.metricType = metricType;
+    this.metricNodeRole = metricNodeRole;
+  }
+
+  private async init() {
+    await clusterOverviewStorage.whenReady;
+    this.setState(clusterOverviewStorage.get());
+
+    // sync user-settings state to local-storage
+    reaction(() => this.getState(), settings => clusterOverviewStorage.set(settings), {
+      equals: comparer.structural,
     });
 
-    // sync user-settings to local-storage
-    reaction(getStorableMetrics, settings => clusterOverview.merge(settings), {
-      equals: comparer.shallow,
-    });
-
+    // TODO: refactor, seems not a correct place to be
     // auto-refresh metrics on user-action
-    reaction(() => this.metricNodeRole, () => this.loadMetrics({}, {
-      resetCache: true,
-    }));
+    reaction(() => this.metricNodeRole, () => {
+      if (!this.metricsLoaded) return;
+      this.resetMetrics();
+      this.loadMetrics();
+    });
 
     // check which node type to select
     reaction(() => nodesStore.items.length, () => {
@@ -62,14 +84,10 @@ export class ClusterOverviewStore extends KubeObjectStore<Cluster> {
   }
 
   @action
-  async loadMetrics(params?: IMetricsReqParams, { resetCache = false } = {}) {
+  async loadMetrics(params?: IMetricsReqParams) {
     await when(() => nodesStore.isLoaded);
     const { masterNodes, workerNodes } = nodesStore;
     const nodes = this.metricNodeRole === MetricNodeRole.MASTER && masterNodes.length ? masterNodes : workerNodes;
-
-    if (resetCache) {
-      this.resetMetrics();
-    }
 
     this.metrics = await clusterApi.getMetrics(nodes.map(node => node.getName()), params);
     this.metricsLoaded = true;
@@ -95,6 +113,7 @@ export class ClusterOverviewStore extends KubeObjectStore<Cluster> {
   reset() {
     super.reset();
     this.resetMetrics();
+    this.setState(clusterOverviewStorage.defaultValue);
   }
 }
 
